@@ -69,7 +69,7 @@ fi
 ### Darmor10 Indices creation to run the SnakePipes pipelines
 
 ```{bash, engine.opts='-l', results='hide'}
-cmd="createIndices --genome $wd_cluster/../genome/darmor10.fa.gz --gtf $wd_cluster/../genome/darmor10.gtf -o ../genome/darmor10_indices darmor10_test"
+cmd="createIndices --genome $wd_cluster/../genome/darmor10.fa.gz --gtf $wd_cluster/../genome/darmor10.gtf.gz -o ../genome/darmor10_indices darmor10_test"
 
 if [ $SSH = T ];
 then
