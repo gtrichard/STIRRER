@@ -52,23 +52,33 @@ for (key in names(params)) {
 
 ## Generate Indices for the darmor10 genome
 
+This part needs to be executed only once, if the darmor10 indices are already created, there's no need to run it (when in doubt, don't run it, if subsquent snakePipes commands are crashing and complaining about missing genome, run this cell).
+
 ```{bash, engine.opts='-l'}
+cmd="wget ftp://parrot.genomics.cn/gigadb/pub/10.5524/100001_101000/100814/Assembly/BnapusDarmor-bzh_chromosomes.fasta.gz -O ../genome/darmor10.fa.gz ;
+     createIndices --genome ../genome/darmor10.fa.gz --gtf ../genome/darmor10.gtf -o ../genome/darmor10_indices darmor10_test"
+
 if [ $SSH = T ];
 then
-  ssh -i $SSH_key_path  $cluster ""$snakepipes_env_load"; mRNA-seq --version"
+  ssh -i $SSH_key_path  $cluster ""$snakepipes_env_load"; cd "$working_dir"; "$cmd""
 else
-  $snakepipes_env_load; mRNA-seq --version
+  $snakepipes_env_load; cd $working_dir; $cmd
 fi
 ```
 
-
-```{bash, engine.opts='-l'}
-ssh -i /home/gtrichard/genossh grichard@genossh.genouest.org 'cd /home/genouest/inra_umr1349/grichard/Data/BP/STIRRER/RNA-seq/SnakePipes/Analyses/regions_without_coverage_in_chiifu/coverage_bedgraphs; conda activate bedtools; SlurmEasy -t 20 "bedtools intersect -b covered_regions_in_chiifu.bed -a /groups/brassica/organisms/bnapus/darmor10/annotation/genes.gtf > darmor10_covered_all_chiifu.gtf"'
-```
-
-
 ## Launch the mRNA snakePipes
 
+```{bash, engine.opts='-l'}
+
+cmd="mRNA-seq --input input/ -c  -o ../genome/darmor10_indices darmor10"
+
+if [ $SSH = T ];
+then
+  ssh -i $SSH_key_path  $cluster ""$snakepipes_env_load"; cd "$working_dir"; "$cmd""
+else
+  $snakepipes_env_load; cd $working_dir; $cmd
+fi
+```
 
 ## Generate Chiifu_covered exons annotation
 
