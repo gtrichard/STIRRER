@@ -12,7 +12,7 @@ The goal of this document is to take as input the RNA-seq datasets produced by S
 
 It includes notably the computation of normalised expression at the gene by gene and homeoglobal scales. It also computes the Additivity and transgressive expression of genes between the hybrid and its two parents. 
 
-It also checks the expression on the A vs C subgenomes of brassica.
+It also checks the expression on the A vs C subgenomes of brassi
 
 # Setup
 
