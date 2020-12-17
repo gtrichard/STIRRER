@@ -13,9 +13,7 @@ STIRRER
 |
 |__genome
 |  |
-|  |__darmor10.fa.gz
 |  |__darmor10.gtf
-|
 |
 |__RNA-seq
    |
@@ -37,7 +35,8 @@ To get this file structures and its content outside of fastq files, simply clone
 knitr::opts_chunk$set(warning = FALSE, message = FALSE)
 source("RNA_seq_functions.R")
 params = list()
-params$working_dir = "/mnt/genouest/groups/bipaa/work/Acyrthosyphon_pisum/EGI/grichard/BP/STIRRER/RNA-seq/"
+params$wd_local = "/mnt/genouest/groups/bipaa/work/Acyrthosyphon_pisum/EGI/grichard/BP/git/STIRRER/RNA-seq/"
+params$wd_cluster = "/groups/bipaa/work/Acyrthosyphon_pisum/EGI/grichard/BP/git/STIRRER/RNA-seq/"
 params$SSH = "T" #keep T if executing Rstudio from a local machine, use something else if executing this Rmd on a cluster with RStudioServer
 params$cluster = 'grichard@genossh.genouest.org'
 params$SSH_key_path = "/home/gtrichard/genossh"
@@ -54,23 +53,50 @@ for (key in names(params)) {
 
 This part needs to be executed only once, if the darmor10 indices are already created, there's no need to run it (when in doubt, don't run it, if subsquent snakePipes commands are crashing and complaining about missing genome, run this cell).
 
-```{bash, engine.opts='-l'}
-cmd="wget ftp://parrot.genomics.cn/gigadb/pub/10.5524/100001_101000/100814/Assembly/BnapusDarmor-bzh_chromosomes.fasta.gz -O ../genome/darmor10.fa.gz ;
-     createIndices --genome ../genome/darmor10.fa.gz --gtf ../genome/darmor10.gtf -o ../genome/darmor10_indices darmor10_test"
+### Darmor10 fasta download
+
+```{bash, engine.opts='-l', results='hide'}
+cmd="wget ftp://parrot.genomics.cn/gigadb/pub/10.5524/100001_101000/100814/Assembly/BnapusDarmor-bzh_chromosomes.fasta.gz -O ../genome/darmor10.fa.gz"
 
 if [ $SSH = T ];
 then
-  ssh -i $SSH_key_path  $cluster ""$snakepipes_env_load"; cd "$working_dir"; "$cmd""
+  ssh -i $SSH_key_path  $cluster ""$snakepipes_env_load"; cd "$wd_cluster"; "$cmd""
 else
   $snakepipes_env_load; cd $working_dir; $cmd
 fi
 ```
 
+### Darmor10 Indices creation to run the SnakePipes pipelines
+
+```{bash, engine.opts='-l', results='hide'}
+cmd="createIndices --genome $wd_cluster/../genome/darmor10.fa.gz --gtf $wd_cluster/../genome/darmor10.gtf -o ../genome/darmor10_indices darmor10_test"
+
+if [ $SSH = T ];
+then
+  ssh -i $SSH_key_path  $cluster ""$snakepipes_env_load"; cd "$wd_cluster"; "$cmd""
+else
+  $snakepipes_env_load; cd $working_dir; $cmd
+fi
+```
+
+### Checking that the pipeline ran properly
+
+```{bash, engine.opts='-l', results='hide'}
+cmd="tail ../genome/darmor10_indices/*log"
+
+if [ $SSH = T ];
+then
+  ssh -i $SSH_key_path  $cluster ""$snakepipes_env_load"; cd "$wd_cluster"; "$cmd""
+else
+  $snakepipes_env_load; cd $working_dir; $cmd
+fi
+```
+
+
 ## Launch the mRNA snakePipes
 
 ```{bash, engine.opts='-l'}
-
-cmd="mRNA-seq --input input/ -c  -o ../genome/darmor10_indices darmor10"
+cmd="mRNA-seq --input SnakePipes/input -o SnakePipes/All_samples_ete_1M -c SnakePipes/snakepipes_params_endtoend_1M.yaml --sampleSheet SnakePipes/sample_sheet.txt --fastqc --aligner STAR darmor10_test"
 
 if [ $SSH = T ];
 then
