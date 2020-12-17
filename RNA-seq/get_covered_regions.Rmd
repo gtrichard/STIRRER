@@ -1,0 +1,127 @@
+---
+title: "Get Uncovered Regions"
+author: "Gautier Richard"
+date: "19/11/2020"
+output: html_document
+---
+
+```{r setup}
+library(knitr)
+library(vroom)
+
+opts_knit$set(root.dir = "/mnt/genouest/home/genouest/inra_umr1349/grichard/DataWSL/BP/STIRRER/RNA-seq/SnakePipes/Analyses/regions_without_coverage_in_chiifu/coverage_bedgraphs")
+
+```
+
+
+# Chiifu
+
+## Loading data
+
+```{r loading data}
+
+data = list()
+data[[1]] = vroom("CS-I.coverage.bw.bedGraph",col_names = F)
+data[[2]] = vroom("CS-II.coverage.bw.bedGraph",col_names = F)
+data[[3]] = vroom("CS-III.coverage.bw.bedGraph",col_names = F)
+
+```
+
+## Getting covered regions in all 3 replicates
+
+```{r}
+data1 = list()
+for (d in 1:length(data)){
+  data1[[d]] = data[[d]]
+  data1[[d]]['IDs'] <- do.call(paste, c(data[[d]][1:3], sep="-"))
+}
+
+data2 = merge(merge(data1[[1]],data1[[2]], by = "IDs"), data1[[3]], by = "IDs")[,c(1,2,3,4,5,9,13)]
+colnames(data2) = c("IDs","chr","start","end","Chiifu_R1","Chiifu_R2","Chiifu_R3")
+covered_regions_chiifu = data2[which(data2[,5] > 0 & data2[,6] > 0 & data2[,7] > 0),]
+covered_regions_chiifu 
+```
+
+
+# Darmor-bzh
+
+## Loading data
+
+```{r loading data}
+
+data = list()
+data[[1]] = vroom("DhB-I.coverage.bw.bedGraph",col_names = F)
+data[[2]] = vroom("DhB-II.coverage.bw.bedGraph",col_names = F)
+data[[3]] = vroom("DhB-III.coverage.bw.bedGraph",col_names = F)
+```
+## Getting covered regions in all 3 replicates
+
+```{r generating empty }
+
+data1 = list()
+for (d in 1:length(data)){
+  data1[[d]] = data[[d]]
+  data1[[d]]['IDs'] <- do.call(paste, c(data[[d]][1:3], sep="-"))
+}
+
+data2 = merge(merge(data1[[1]],data1[[2]], by = "IDs"), data1[[3]], by = "IDs")[,c(1,2,3,4,5,9,13)]
+colnames(data2) = c("IDs","chr","start","end","Darmor_R1","Darmor_R2","Darmor_R3")
+covered_regions_darmor = data2[which(data2[,5] > 0 & data2[,6] > 0 & data2[,7] > 0),]
+covered_regions_darmor
+
+covered_regions_darmor_A = covered_regions_darmor[grep(covered_regions_darmor$chr, pattern = "^A"), ]  
+covered_regions_darmor_C = covered_regions_darmor[grep(covered_regions_darmor$chr, pattern = "^C"), ]
+
+```
+
+# Comparing Chiifu and Darmor covered regions
+
+```{r common empty regions}
+
+`%not in%` <- function (x, table) is.na(match(x, table, nomatch=NA_integer_))
+
+common_covered = merge(covered_regions_chiifu , covered_regions_darmor_A, by = "IDs")
+covered_regions_chiifu_spe = covered_regions_chiifu[which(covered_regions_chiifu$IDs %not in% common_covered$IDs),]
+covered_regions_darmor_spe = covered_regions_darmor_A[which(covered_regions_darmor_A$IDs %not in% common_covered$IDs),]
+
+cat("On the A subgenome, covered regions in common between Darmor and Chiifu: ")
+cat(nrow(common_covered))
+cat("\nCovered regions specific to Chiifu: ")
+cat(nrow(covered_regions_chiifu_spe))
+cat("\nCovered regions specific to Darmor: ")
+cat(nrow(covered_regions_darmor_spe))
+
+write.table(x = covered_regions_chiifu_spe[order(covered_regions_chiifu_spe$chr, covered_regions_chiifu_spe$start),2:4], file =  "covered_regions_specific_to_chiifu.bed", quote = F, col.names = F, row.names = F, sep = "\t")
+
+
+write.table(x = covered_regions_chiifu[,2:4], file =  "covered_regions_in_chiifu.bed", quote = F, col.names = F, row.names = F, sep = "\t")
+
+write.table(x = common_covered[,2:4], file =  "covered_regions_in_chiifu_darmor.bed", quote = F, col.names = F, row.names = F, sep = "\t")
+
+```
+
+# Reduce the genes annotation to covered regions in chiifu
+
+```{bash, engine.opts='-l'}
+ssh -i /home/grichard/id_rsa grichard@genossh.genouest.org 'cd /home/genouest/inra_umr1349/grichard/Data/BP/STIRRER/RNA-seq/SnakePipes/Analyses/regions_without_coverage_in_chiifu/coverage_bedgraphs; conda activate bedtools; SlurmEasy -t 20 "bedtools intersect -b covered_regions_in_chiifu.bed -a /groups/brassica/organisms/bnapus/darmor10/annotation/genes.gtf > darmor10_covered_all_chiifu.gtf"'
+```
+
+# Perform FeatureCounts on the new annotation
+
+```{bash, engine.opts='-l'}
+ssh -i /home/grichard/id_rsa grichard@genossh.genouest.org 'cd /home/genouest/inra_umr1349/grichard/Data/BP/STIRRER/RNA-seq/SnakePipes/All_samples_ete_1M/filtered_bam; conda activate featureCounts; for i in *bam; do SlurmEasy -t 20 -n featureCounts "featureCounts -T 20 -a ../../Analyses/regions_without_coverage_in_chiifu/coverage_bedgraphs/darmor10_covered_all_chiifu.gtf -o ../featureCounts_on_covered_regions/$i.counts_on_covered_regions_chiifu.txt -C -Q 10 --primary -p -B $i"; done'
+```
+
+
+# Reduce the genes annotation to covered regions in chiifu and darmor
+
+```{bash, engine.opts='-l'}
+ssh -i /home/grichard/id_rsa grichard@genossh.genouest.org 'cd /home/genouest/inra_umr1349/grichard/Data/BP/STIRRER/RNA-seq/SnakePipes/Analyses/regions_without_coverage_in_chiifu/coverage_bedgraphs; conda activate bedtools; SlurmEasy -t 20 "bedtools intersect -b covered_regions_in_chiifu_darmor.bed -a /groups/brassica/organisms/bnapus/darmor10/annotation/genes.gtf > darmor10_covered_all_chiifu_darmor.gtf"'
+```
+
+# Perform FeatureCounts on the new annotation
+
+```{bash, engine.opts='-l'}
+ssh -i /home/grichard/id_rsa grichard@genossh.genouest.org 'cd /home/genouest/inra_umr1349/grichard/Data/BP/STIRRER/RNA-seq/SnakePipes/All_samples_ete_1M/filtered_bam; conda activate featureCounts; for i in *bam; do SlurmEasy -t 20 -n featureCounts "featureCounts -T 20 -a ../../Analyses/regions_without_coverage_in_chiifu/coverage_bedgraphs/darmor10_covered.gtf -o ../featureCounts_on_covered_regions/$i.counts_on_covered_regions_chiifu_darmor.txt -C -Q 10 --primary -p -B $i"; done'
+```
+
