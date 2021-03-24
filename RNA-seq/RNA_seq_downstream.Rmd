@@ -42,6 +42,7 @@ params$cluster = 'grichard@genossh.genouest.org'
 params$SSH_key_path = "/home/gtrichard/genossh"
 params$snakepipes_env_load = "conda activate snakePipes2"
 params$bedtools_env_load = "conda activate bedtools"
+params$featureCounts_env_load = "conda activate featureCounts"
 
 # adds params names and values as variables for bash
 for (key in names(params)) {
@@ -100,13 +101,156 @@ cmd="mRNA-seq --input SnakePipes/input -o SnakePipes/All_samples_ete_1M -c Snake
 
 if [ $SSH = T ];
 then
-  ssh -i $SSH_key_path  $cluster ""$snakepipes_env_load"; cd "$working_dir"; "$cmd""
+  ssh -i $SSH_key_path  $cluster ""$snakepipes_env_load"; cd "$wd_cluster"; "$cmd""
+else
+  $snakepipes_env_load; cd $wd_cluster; $cmd
+fi
+```
+
+### Checking that the pipeline ran properly
+
+```{bash, engine.opts='-l', results='hide'}
+cmd="tail SnakePipes/All_samples_ete_1M/*log"
+
+if [ $SSH = T ];
+then
+  ssh -i $SSH_key_path  $cluster ""$snakepipes_env_load"; cd "$wd_cluster"; "$cmd""
 else
   $snakepipes_env_load; cd $working_dir; $cmd
 fi
 ```
 
 ## Generate Chiifu_covered exons annotation
+
+### Chiifu
+
+#### Loading data
+
+```{r loading data}
+
+if (params$SSH == "T"){
+  filespath = params$wd_local
+}else{
+  filespath = params$wd_cluster
+}
+
+data = list()
+data[[1]] = as.data.frame(rtracklayer::import.bw(paste0(filespath, "SnakePipes/All_samples_ete_1M/bamCoverage/CS-I.coverage.bw")))[,c(1:3,6)]
+data[[2]] = as.data.frame(rtracklayer::import.bw(paste0(filespath, "SnakePipes/All_samples_ete_1M/bamCoverage/CS-II.coverage.bw")))[,c(1:3,6)]
+data[[3]] = as.data.frame(rtracklayer::import.bw(paste0(filespath, "SnakePipes/All_samples_ete_1M/bamCoverage/CS-III.coverage.bw")))[,c(1:3,6)]
+```
+
+#### Getting covered regions in all 3 replicates
+
+```{r}
+data1 = list()
+for (d in 1:length(data)){
+  data1[[d]] = data[[d]]
+  data1[[d]]['IDs'] <- do.call(paste, c(data[[d]][1:3], sep="-"))
+}
+
+data2 = merge(merge(data1[[1]],data1[[2]], by = "IDs"), data1[[3]], by = "IDs")[,c(1,2,3,4,5,9,13)]
+colnames(data2) = c("IDs","chr","start","end","Chiifu_R1","Chiifu_R2","Chiifu_R3")
+covered_regions_chiifu = data2[which(data2[,5] > 0 & data2[,6] > 0 & data2[,7] > 0),]
+covered_regions_chiifu 
+```
+
+
+### Darmor-bzh
+
+#### Loading data
+
+```{r loading data}
+
+data = list()
+data[[1]] = as.data.frame(rtracklayer::import.bw(paste0(filespath, "SnakePipes/All_samples_ete_1M/bamCoverage/DhB-I.coverage.bw")))[,c(1:3,6)]
+data[[2]] = as.data.frame(rtracklayer::import.bw(paste0(filespath, "SnakePipes/All_samples_ete_1M/bamCoverage/DhB-II.coverage.bw")))[,c(1:3,6)]
+data[[3]] = as.data.frame(rtracklayer::import.bw(paste0(filespath, "SnakePipes/All_samples_ete_1M/bamCoverage/DhB-III.coverage.bw")))[,c(1:3,6)]
+```
+
+#### Getting covered regions in all 3 replicates
+
+```{r generating empty }
+
+data1 = list()
+for (d in 1:length(data)){
+  data1[[d]] = data[[d]]
+  data1[[d]]['IDs'] <- do.call(paste, c(data[[d]][1:3], sep="-"))
+}
+
+data2 = merge(merge(data1[[1]],data1[[2]], by = "IDs"), data1[[3]], by = "IDs")[,c(1,2,3,4,5,9,13)]
+colnames(data2) = c("IDs","chr","start","end","Darmor_R1","Darmor_R2","Darmor_R3")
+covered_regions_darmor = data2[which(data2[,5] > 0 & data2[,6] > 0 & data2[,7] > 0),]
+covered_regions_darmor
+
+covered_regions_darmor_A = covered_regions_darmor[grep(covered_regions_darmor$chr, pattern = "^A"), ]  
+covered_regions_darmor_C = covered_regions_darmor[grep(covered_regions_darmor$chr, pattern = "^C"), ]
+
+```
+
+### Comparing Chiifu and Darmor covered regions
+
+```{r common empty regions}
+
+`%not in%` <- function (x, table) is.na(match(x, table, nomatch=NA_integer_))
+
+common_covered = merge(covered_regions_chiifu , covered_regions_darmor_A, by = "IDs")
+covered_regions_chiifu_spe = covered_regions_chiifu[which(covered_regions_chiifu$IDs %not in% common_covered$IDs),]
+covered_regions_darmor_spe = covered_regions_darmor_A[which(covered_regions_darmor_A$IDs %not in% common_covered$IDs),]
+
+cat("On the A subgenome, covered regions in common between Darmor and Chiifu: ")
+cat(nrow(common_covered))
+cat("\nCovered regions specific to Chiifu: ")
+cat(nrow(covered_regions_chiifu_spe))
+cat("\nCovered regions specific to Darmor: ")
+cat(nrow(covered_regions_darmor_spe))
+
+write.table(x = covered_regions_chiifu_spe[order(covered_regions_chiifu_spe$chr, covered_regions_chiifu_spe$start),2:4], file =  "covered_regions_specific_to_chiifu.bed", quote = F, col.names = F, row.names = F, sep = "\t")
+
+
+write.table(x = covered_regions_chiifu[,2:4], file =  paste0(filespath,"SnakePipes/All_samples_ete_1M/bamCoverage/covered_regions_in_chiifu.bed") , quote = F, col.names = F, row.names = F, sep = "\t")
+
+write.table(x = common_covered[,2:4], file =  paste0(filespath,"SnakePipes/All_samples_ete_1M/bamCoverage/covered_regions_in_chiifu_darmor.bed"), quote = F, col.names = F, row.names = F, sep = "\t")
+
+```
+
+### Reduce the genes annotation to covered regions in chiifu
+
+```{bash, engine.opts='-l'}
+
+cmd="SlurmEasy -t 2 -n bedtools_chiifu_covered 'bedtools intersect -b SnakePipes/All_samples_ete_1M/bamCoverage/covered_regions_in_chiifu.bed -a ../genome/darmor10_indices/annotation/genes.gtf > SnakePipes/All_samples_ete_1M/bamCoverage/darmor10_covered_all_chiifu.gtf'"
+
+if [ $SSH = T ];
+then
+  ssh -i $SSH_key_path  $cluster ""$bedtools_env_load"; cd "$wd_cluster"; "$cmd""
+else
+  $bedtools_env_load; cd $wd_cluster; $cmd
+fi
+```
+
+### Perform FeatureCounts on the new annotation
+
+```{bash, engine.opts='-l'}
+
+cmd='cd SnakePipes/All_samples_ete_1M/;
+mkdir featureCounts_on_covered_regions;
+cd filtered_bam;
+for i in *bam;
+do SlurmEasy -t 20 -n featureCounts_chiifu_covered "featureCounts -T 20 -a ../bamCoverage/darmor10_covered_all_chiifu.gtf -o ../featureCounts_on_covered_regions/$i.counts_on_covered_regions_chiifu.txt -C -Q 10 --primary -p -B $i";
+done
+'
+
+if [ $SSH = T ];
+then
+  ssh -i $SSH_key_path  $cluster ""$featureCounts_env_load"; cd "$wd_cluster"; "$cmd""
+else
+  $featureCounts_env_load; cd $wd_cluster; $cmd
+fi
+
+```
+
+
+
 
 
 # RNA-seq Downstream Analyses
@@ -125,169 +269,29 @@ It also checks the expression on the A vs C subgenomes of brassica plants.
 
 We must filter out genes to only keep expressed genes and homeologs to have a consistent list of genes between the gene by gene and homeoglobal scales. We must first find the least biased way to filter genes and to normalize their expression.
 
+#### Genes filtration and normalization sample per sample
 
-#### How to normalise expression on the A subgenome
+We chose to use regions that are covered in Chiifu samples to avoid a bias in further analyses (without this selection, Chiifu samples show are artificial lower expression because of the bias of mappig Chiifu reads on Darmor genome).
 
+We only keep homeologs on the A and C subgenomes in ordre to compare gene by gene expression level to homeoglobal expression further down in the data analysis.
 
-#### All comparison only A subgenome from start
+We also perform the genes expression normalisation genome-wide (on homeologs genes showing a RNA-seq coverage in Chiifu) and select genes of the A subgenome after genes expression normalization as it gives a more comparable expression across samples than select A genomes before normalisation.
 
-```{r, fig.height= 5, fig.width= 8}
-
-path =  "/mnt/genouest/groups/bipaa/work/Acyrthosyphon_pisum/EGI/grichard/BP/STIRRER/RNA-seq/SnakePipes/All_samples_ete_1M/featureCounts/"
-
-homeo_path = "/mnt/genouest/groups/bipaa/work/Acyrthosyphon_pisum/EGI/grichard/BP/STIRRER/Resource/Homeologie_Bna_DarV10_Meth.txt"
-
-files = list.files(path = path, pattern = "CS.*.counts.txt$|DhB.*.counts.txt$|DCh.*.counts.txt$|DCD.*.counts.txt$|CD4.*.counts.txt$")
-
-col <- c( brewer.pal(8, "Blues")[6:8], brewer.pal(8, "Greens")[6:8], brewer.pal(8, "Reds")[6:8], brewer.pal(8, "Oranges")[6:8], brewer.pal(8, "Greys")[6:8] )
-
-group   = c(rep("Darmor_AA",3),rep("Chiifu_AA",3),rep("Triploid_D_AAC",3),rep("Triploid_Ch_AAC",3),rep("Darmor_AACC",3))
-
-columns = c("gene","chr","start","end","strand","length",
-            "Darmor_AA R1", "Darmor_AA R2", "Darmor_AA R3", 
-            "Chiifu_AA R1","Chiifu_AA R2","Chiifu_AA R3",
-            "Triploid_D_AAC R1", "Triploid_D_AAC R2", "Triploid_D_AAC R3", 
-            "Triploid_Ch_AAC R1", "Triploid_Ch_AAC R2", "Triploid_Ch_AAC R3", 
-            "Darmor_AACC R1","Darmor_AACC R2","Darmor_AACC R3")
-
-design <- model.matrix(~0+group)
-colnames(design) <- gsub("group", "", colnames(design))
-
-contr.matrix <- makeContrasts(
-  Chiifu_vs_Darmor = Chiifu_AA - Darmor_AACC,
-  TriploidCh_vs_Darmor = Triploid_Ch_AAC -  Darmor_AACC,
-  TriploidCh_vs_Chiifu = Triploid_Ch_AAC - Chiifu_AA,
-  Darmor_vs_Darmor_AA = Darmor_AACC - Darmor_AA,
-  Darmor_vs_TriploidD = Darmor_AACC -  Triploid_D_AAC,
-  TriploidCh_vs_TriploidD = Triploid_Ch_AAC - Triploid_D_AAC,
-  Chiifu_vs_Darmor_AA = Chiifu_AA - Darmor_AA,
-  levels = colnames(design)
-)
-
-lfc=0.584962501
-
-DEG_all_A <- getDEG(path, files, group, columns, contr.matrix, lfc, genome = "^A", normalisation = "RLE", col, keep_homeo= F)
-
-
-kable_minimal(kable(summary(DEG_all_A$dtA),caption = "A subgenome"))
-
-
-to_plot <- as.data.frame(DEG_all_A$lcpm)
-
-to_plot = gather(as.data.frame(to_plot), sample, lcpm, "Darmor_AA R1":"Darmor_AACC R3",factor_key=TRUE)
-
-ggplot(to_plot, aes(x = to_plot$sample, y = to_plot$lcpm, color = to_plot$sample)) +
-  geom_boxplot(width = 0.60, alpha = 0.3)+
-  geom_violin( width = 0.95, fill = NA)+
-  scale_color_manual(values = col) +
-  theme_cowplot()+
-  theme(axis.text.x = element_text(angle = 45, hjust = 1),
-        legend.position = "none")+
-  xlab("Samples") +
-  ylab("Log2 CPM") +
-  ggtitle("Expression on Darmor-bzh A subgenome")
-
-ggplot(to_plot, aes( x = to_plot$lcpm, color = to_plot$sample)) +
-  geom_density(alpha =0.2)+
-  scale_color_manual("Samples", values = col) +
-  scale_fill_manual("Samples", values = col) +
-  xlim(min(to_plot$lcpm)-1,max(to_plot$lcpm))+
-  theme_cowplot()+
-  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
-  xlab("samples") +
-  ylab("Log2 CPM") +
-  ggtitle("Expression on Darmor-bzh A subgenome")
-
-```
-
-Here we can see that Chiifu is biased, especially on the box plots. Indeed there are many genes that are not expressed. Let's see how to fix this.
-
-#### All comparison A/C subgenome and looking at A subsequently
-
-In that section we normalize the expression of all samples on both A and C subgenomes and only keep A genes afterwards.
-
-```{r, fig.height= 5, fig.width= 8}
-
-path =  "/mnt/genouest/groups/bipaa/work/Acyrthosyphon_pisum/EGI/grichard/BP/STIRRER/RNA-seq/SnakePipes/All_samples_ete_1M/featureCounts/"
-
-files = list.files(path = path, pattern = "CS.*.counts.txt$|DhB.*.counts.txt$|DCh.*.counts.txt$|DCD.*.counts.txt$|CD4.*.counts.txt$")
-
-col <- c( brewer.pal(8, "Blues")[6:8], brewer.pal(8, "Greens")[6:8], brewer.pal(8, "Reds")[6:8], brewer.pal(8, "Oranges")[6:8], brewer.pal(8, "Greys")[6:8] )
-
-group   = c(rep("Darmor_AA",3),rep("Chiifu_AA",3),rep("Triploid_D_AAC",3),rep("Triploid_Ch_AAC",3),rep("Darmor_AACC",3))
-
-columns = c("gene","chr","start","end","strand","length",
-            "Darmor_AA R1", "Darmor_AA R2", "Darmor_AA R3", 
-            "Chiifu_AA R1","Chiifu_AA R2","Chiifu_AA R3",
-            "Triploid_D_AAC R1", "Triploid_D_AAC R2", "Triploid_D_AAC R3", 
-            "Triploid_Ch_AAC R1", "Triploid_Ch_AAC R2", "Triploid_Ch_AAC R3", 
-            "Darmor_AACC R1","Darmor_AACC R2","Darmor_AACC R3")
-
-design <- model.matrix(~0+group)
-colnames(design) <- gsub("group", "", colnames(design))
-
-contr.matrix <- makeContrasts(
-  Chiifu_vs_Darmor = Chiifu_AA - Darmor_AACC,
-  TriploidCh_vs_Darmor = Triploid_Ch_AAC -  Darmor_AACC,
-  TriploidCh_vs_Chiifu = Triploid_Ch_AAC - Chiifu_AA,
-  Darmor_vs_Darmor_AA = Darmor_AACC - Darmor_AA,
-  Darmor_vs_TriploidD = Darmor_AACC -  Triploid_D_AAC,
-  TriploidCh_vs_TriploidD = Triploid_Ch_AAC - Triploid_D_AAC,
-  Chiifu_vs_Darmor_AA = Chiifu_AA - Darmor_AA,
-  levels = colnames(design)
-)
-
-lfc=0.584962501
-
-DEG_all_A <- getDEG(path, files, group, columns, contr.matrix, lfc, genome = ".*", normalisation = "RLE", col, keep_homeo = F)
-
-kable_minimal(kable(summary(DEG_all_A$dtA),caption = "A subgenome"))
-
-
-to_plot <- as.data.frame(DEG_all_A$lcpm)
-to_plot = to_plot[grep(row.names(to_plot), pattern = "^A"), ]  
-
-to_plot = gather(as.data.frame(to_plot), sample, lcpm, "Darmor_AA R1":"Darmor_AACC R3",factor_key=TRUE)
-
-ggplot(to_plot, aes(x = to_plot$sample, y = to_plot$lcpm, color = to_plot$sample)) +
-  geom_boxplot(width = 0.60, alpha = 0.3)+
-  geom_violin( width = 0.95, fill = NA)+
-  scale_color_manual(values = col) +
-  theme_cowplot()+
-  theme(axis.text.x = element_text(angle = 45, hjust = 1),
-        legend.position = "none")+
-  xlab("Samples") +
-  ylab("Log2 CPM") +
-  ggtitle("Expression on Darmor-bzh A subgenome")
-
-ggplot(to_plot, aes( x = to_plot$lcpm, color = to_plot$sample)) +
-  geom_density(alpha =0.2)+
-  scale_color_manual("Samples", values = col) +
-  scale_fill_manual("Samples", values = col) +
-  xlim(min(to_plot$lcpm)-1,max(to_plot$lcpm))+
-  theme_cowplot()+
-  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
-  xlab("samples") +
-  ylab("Log2 CPM") +
-  ggtitle("Expression on Darmor-bzh A subgenome")
-
-
-
-```
-
-We can see a slight improvement on Chiifu expression vs others.
-
-
-#### Removing uncovered regions in common between Chiifu
-
-Now we try a more stringent approach. We only keep the regions covered in Chiifu and Darmor-bzh. The files and script to generate them is available here (get_covered_regions.Rmd): /home/genouest/inra_umr1349/grichard/Data/BP/STIRRER/RNA-seq/SnakePipes/Analyses/regions_without_coverage_in_chiifu/coverage_bedgraphs
 
 ```{r}
-path =  "/mnt/genouest/groups/bipaa/work/Acyrthosyphon_pisum/EGI/grichard/BP/STIRRER/RNA-seq/SnakePipes/All_samples_ete_1M/featureCounts_on_covered_regions/"
+if (params$SSH == "T"){
+  path =  paste0(params$wd_local, "SnakePipes/All_samples_ete_1M/featureCounts_on_covered_regions/")
+  homeo_path =  paste0(params$wd_local, "../genome/Homeologie_Bna_DarV10_Meth.txt")
+}else{
+  path =  paste0(params$wd_cluster, "SnakePipes/All_samples_ete_1M/featureCounts_on_covered_regions/")
+  homeo_path =  paste0(params$wd_cluster, "../genome/Homeologie_Bna_DarV10_Meth.txt")
+}
+
+col = c( brewer.pal(8, "Blues")[6:8], brewer.pal(8, "Greens")[6:8], brewer.pal(8, "Reds")[6:8], 
+         brewer.pal(8, "Oranges")[6:8], brewer.pal(8, "Greys")[6:8] )
+
 files = list.files(path = path, pattern = "CS.*chiifu.txt$|DhB.*chiifu.txt$|DCh.*chiifu.txt$|DCD.*chiifu.txt$|CD4.*chiifu.txt$")
 
-col <- c( brewer.pal(8, "Blues")[6:8], brewer.pal(8, "Greens")[6:8], brewer.pal(8, "Reds")[6:8], brewer.pal(8, "Oranges")[6:8], brewer.pal(8, "Greys")[6:8] )
-
 group   = c(rep("Darmor_AA",3),rep("Chiifu_AA",3),rep("Triploid_D_AAC",3),rep("Triploid_Ch_AAC",3),rep("Darmor_AACC",3))
 
 columns = c("gene","chr","start","end","strand","length",
@@ -304,8 +308,9 @@ contr.matrix <- makeContrasts(
   Chiifu_vs_Darmor = Chiifu_AA - Darmor_AACC,
   TriploidCh_vs_Darmor = Triploid_Ch_AAC -  Darmor_AACC,
   TriploidCh_vs_Chiifu = Triploid_Ch_AAC - Chiifu_AA,
+  TriploidD_vs_Darmor = Triploid_D_AAC - Darmor_AACC,
+  TriploidD_vs_Darmor_AA = Triploid_D_AAC - Darmor_AA,
   Darmor_vs_Darmor_AA = Darmor_AACC - Darmor_AA,
-  Darmor_vs_TriploidD = Darmor_AACC -  Triploid_D_AAC,
   TriploidCh_vs_TriploidD = Triploid_Ch_AAC - Triploid_D_AAC,
   Chiifu_vs_Darmor_AA = Chiifu_AA - Darmor_AA,
   levels = colnames(design)
@@ -313,26 +318,27 @@ contr.matrix <- makeContrasts(
 
 lfc=0.584962501
 
-DEG_all_A_on_chiifu <- getDEG(path, files, group, columns, contr.matrix, lfc, genome = ".*", normalisation = "RLE", col, keep_homeo = F)
+DEG_all_A <- getDEG(path = path, files = files, group = group, columns = columns, contr.matrix = contr.matrix, lfc = lfc, genome = ".*", normalisation = "RLE", keep_homeo = T, homeo_path = homeo_path, col = col)
+```
 
-kable_minimal(kable(summary(DEG_all_A_on_chiifu$dtA),caption = "A subgenome"))
+##### Expression normalisation plots
 
-
-to_plot <- as.data.frame(DEG_all_A_on_chiifu$lcpm)
+```{r,  fig.height= 5, fig.width= 8}
+to_plot <- as.data.frame(DEG_all_A$lcpm)
 to_plot = to_plot[grep(row.names(to_plot), pattern = "^A"), ]  
 
 to_plot = gather(as.data.frame(to_plot), sample, lcpm, "Darmor_AA R1":"Darmor_AACC R3",factor_key=TRUE)
 
 ggplot(to_plot, aes(x = to_plot$sample, y = to_plot$lcpm, color = to_plot$sample)) +
-  geom_boxplot(width = 0.60, alpha = 0.3)+
-  geom_violin( width = 0.95, fill = NA)+
+  geom_boxplot(width = 0.60, alpha = 0.3) +
+  geom_violin( width = 0.95, fill = NA) +
   scale_color_manual(values = col) +
-  theme_cowplot()+
+  theme_cowplot() +
   theme(axis.text.x = element_text(angle = 45, hjust = 1),
-        legend.position = "none")+
+        legend.position = "none") +
   xlab("Samples") +
   ylab("Log2 CPM") +
-  ggtitle("Expression on Darmor-bzh A subgenome w/ coverage")
+  ggtitle("Genes expression on Darmor A subgenome")
 
 ggplot(to_plot, aes( x = to_plot$lcpm, color = to_plot$sample)) +
   geom_density(alpha =0.2)+
@@ -343,114 +349,26 @@ ggplot(to_plot, aes( x = to_plot$lcpm, color = to_plot$sample)) +
   theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
   xlab("samples") +
   ylab("Log2 CPM") +
-  ggtitle("Expression on Darmor-bzh A subgenome w/ coverage")
+  ggtitle("Genes expression on Darmor A subgenome")
 
 ```
 
-Using regions covered in chiifu we have a better balance of expression between chiifu and the other genotypes, thus helping to mitigate the bias of mapping Chiifu on the Darmor-bzh genome. We keep 17348 genes overall on the A subgenome.
 
-### Keeping only homeologs
-
-We need to test if it's better to filter homeologs before or after normalization of genes expression.
-
-#### Filtration before normalization
+##### DEG numbers
 
 ```{r}
-
-DEG_all_A_on_chiifu_homeo <- getDEG(path, files, group, columns, contr.matrix, lfc, genome = ".*", normalisation = "RLE", col, keep_homeo = T)
-
-kable_minimal(kable(summary(DEG_all_A_on_chiifu_homeo$dtA),caption = "A subgenome"))
-
-
-to_plot <- as.data.frame(DEG_all_A_on_chiifu_homeo$lcpm)
-to_plot = to_plot[grep(row.names(to_plot), pattern = "^A"), ]  
-
-to_plot = gather(as.data.frame(to_plot), sample, lcpm, "Darmor_AA R1":"Darmor_AACC R3",factor_key=TRUE)
-
-ggplot(to_plot, aes(x = to_plot$sample, y = to_plot$lcpm, color = to_plot$sample)) +
-  geom_boxplot(width = 0.60, alpha = 0.3)+
-  geom_violin( width = 0.95, fill = NA)+
-  scale_color_manual(values = col) +
-  theme_cowplot()+
-  theme(axis.text.x = element_text(angle = 45, hjust = 1),
-        legend.position = "none")+
-  xlab("Samples") +
-  ylab("Log2 CPM") +
-  ggtitle("Expression on Darmor-bzh A subgenome w/ coverage")
-
-ggplot(to_plot, aes( x = to_plot$lcpm, color = to_plot$sample)) +
-  geom_density(alpha =0.2)+
-  scale_color_manual("Samples", values = col) +
-  scale_fill_manual("Samples", values = col) +
-  theme_cowplot()+
-  xlim(min(to_plot$lcpm)-1,max(to_plot$lcpm))+
-  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
-  xlab("samples") +
-  ylab("Log2 CPM") +
-  ggtitle("Expression on Darmor-bzh A subgenome w/ coverage")
-
-
+kable_minimal(kable(t(summary(DEG_all_A$dtA)),caption = "A subgenome"))
 ```
 
 
-#### Filtration after normalization
+##### DEG plots
 
-```{r}
-homeo = vroom('/mnt/genouest/groups/bipaa/work/Acyrthosyphon_pisum/EGI/grichard/BP/STIRRER/Resource/Homeologie_Bna_DarV10_Meth.txt', col_names = F)
-homeoA = as.data.frame(homeo$X1)
-homeoC = as.data.frame(homeo$X2)
-colnames(homeoA) = "gene"
-colnames(homeoC) = "gene"
-homeo = as.data.frame(rbind(homeoA, homeoC))
-homeo = as.data.frame(homeo[order(homeo),])
-colnames(homeo) = "gene"
-homeo = unique(homeo)
-rownames(homeo) = homeo$gene
-
-DEG_homeo_A_lpcm = merge(DEG_all_A_on_chiifu$lcpm, homeo, by = "row.names" )
-rownames(DEG_homeo_A_lpcm) = DEG_homeo_A_lpcm$gene
-DEG_homeo_A_lpcm = DEG_homeo_A_lpcm[,3:ncol(DEG_homeo_A_lpcm)-1]
-DEG_homeo_A_lpcm = as.data.frame(DEG_homeo_A_lpcm)
-
-DEG_homeo_A_dtA = merge(DEG_all_A_on_chiifu$dtA, homeo, by = "row.names" )
-rownames(DEG_homeo_A_dtA ) = DEG_homeo_A_dtA $gene
-DEG_homeo_A_dtA  = DEG_homeo_A_dtA [,3:ncol(DEG_homeo_A_dtA )-1]
-
-DEG_homeo_A_dt = merge(DEG_all_A_on_chiifu$dt, homeo, by = "row.names" )
-rownames(DEG_homeo_A_dt ) = DEG_homeo_A_dt $gene
-DEG_homeo_A_dt  = DEG_homeo_A_dt [,3:ncol(DEG_homeo_A_dt )-1]
-
-
-
-to_plot <- as.data.frame(DEG_homeo_A_lpcm)
-to_plot = to_plot[grep(row.names(to_plot), pattern = "^A"), ]  
-
-to_plot = gather(as.data.frame(to_plot), sample, lcpm, "Darmor_AA R1":"Darmor_AACC R3",factor_key=TRUE)
-
-
-ggplot(to_plot, aes(x = to_plot$sample, y = to_plot$lcpm, color = to_plot$sample)) +
-  geom_boxplot(width = 0.60, alpha = 0.3)+
-  geom_violin( width = 0.95, fill = NA)+
-  scale_color_manual(values = col) +
-  theme_cowplot()+
-  theme(axis.text.x = element_text(angle = 45, hjust = 1),
-        legend.position = "none")+
-  xlab("Samples") +
-  ylab("Log2 CPM") +
-  ggtitle("Expression on Darmor-bzh A subgenome w/ coverage")
-```
-
-No real difference, after normalization is way more complicated to implement, so we keep the filtration before normalization since changes will only be marginal anyways
-
-#### DEG plots A subgenome using regions covered in Chiifu
-
-```{r, fig.height= 4, fig.width= 6}
-
-data = DEG_all_A_on_chiifu_homeo
+```{r,  fig.height= 4, fig.width= 6}
+data = DEG_all_A
 cols_1 = c("Triploid_Ch_AAC R1", "Triploid_Ch_AAC R2", "Triploid_Ch_AAC R3")
 cols_2 = c("Darmor_AACC R1","Darmor_AACC R2", "Darmor_AACC R3")
 name_1 = "Hybrid DCh AAC"
-name_2 = "Darmor-bzh AACC"
+name_2 = "Darmor AACC"
 genome = "A"
 comp_name = "TriploidCh_vs_Darmor"
 p1 <- plotDEG(data= data, cols_1= cols_1 , cols_2= cols_2, name_1 = name_1, name_2 = name_2, genome = "A", comp_name = comp_name)
@@ -458,7 +376,7 @@ p1
 cols_1 = c("Chiifu_AA R1", "Chiifu_AA R2", "Chiifu_AA R3")
 cols_2 = c("Darmor_AACC R1","Darmor_AACC R2", "Darmor_AACC R3")
 name_1 = "Chiifu AA"
-name_2 = "Darmor-bzh AACC"
+name_2 = "Darmor AACC"
 genome = "A"
 comp_name = "Chiifu_vs_Darmor"
 p2 <- plotDEG(data= data, cols_1= cols_1 , cols_2= cols_2, name_1 = name_1, name_2 = name_2, genome = "A", comp_name = comp_name)
@@ -471,21 +389,23 @@ genome = "A"
 comp_name = "TriploidCh_vs_Chiifu"
 p3 <- plotDEG(data= data, cols_1= cols_1 , cols_2= cols_2, name_1 = name_1, name_2 = name_2, genome = "A", comp_name = comp_name)
 p3
-
-
-
-
 ```
 
-
-## Parental mix raw genes coverage calculation
+#### Genes filtration and normalization for parental mix
 
 To compare Triploid vs Tetra and diploid genomes, it is necessary to compute the parental mix genes expression. Replicates number (1, 2, 3) correspond to different batches of plants that were raised in the same conditions among the three genotypes. For each gene, we thus calculate the parental mix expression by computing the average of the Counts Per Million (CPM), per replicate, between the tetraploid and the diploid genotypes.
 
 The genes expression were obtained using the SnakePipes mRNA-seq pipeline on the Darmor-bzh v10 genome assembly, using STAR with the following parameters for the mapping: `--alignEndsType EndToEnd --outFilterMismatchNmax 1`.
 
 ```{r}
-path =  "/mnt/genouest/groups/bipaa/work/Acyrthosyphon_pisum/EGI/grichard/BP/STIRRER/RNA-seq/SnakePipes/All_samples_ete_1M/featureCounts_on_covered_regions/"
+if (params$SSH == "T"){
+  path =  paste0(params$wd_local, "SnakePipes/All_samples_ete_1M/featureCounts_on_covered_regions/")
+  homeo_path =  paste0(params$wd_local, "../genome/Homeologie_Bna_DarV10_Meth.txt")
+}else{
+  path =  paste0(params$wd_cluster, "SnakePipes/All_samples_ete_1M/featureCounts_on_covered_regions/")
+  homeo_path =  paste0(params$wd_cluster, "../genome/Homeologie_Bna_DarV10_Meth.txt")
+}
+
 files = list.files(path = path, pattern = "CS.*chiifu.txt$|DhB.*chiifu.txt$|DCh.*chiifu.txt$")
 
 col <- c( brewer.pal(8, "Greens")[6:8], brewer.pal(8, "Reds")[6:8], brewer.pal(8, "Greys")[6:8] )
@@ -502,11 +422,288 @@ colnames(design) <- gsub("group", "", colnames(design))
 
 lfc=0.584962501
 
-DEG_parental_homeo <- getDEG_pmix(path, files, group, columns, contr.matrix, lfc, genome = ".*", normalisation = "RLE", col, keep_homeo = T)
+DEG_parental <- getDEG_pmix(path, files, group, columns, contr.matrix, lfc, genome = ".*", normalisation = "RLE", col, keep_homeo = T, homeo_path = homeo_path)
+```
 
+```{r}
+kable_minimal(kable(summary(DEG_parental$dtA),caption = "A subgenome"))
+```
+
+```{r,  fig.height= 4, fig.width= 6}
+to_plot <- as.data.frame(DEG_parental$lcpm)
+to_plot = to_plot[grep(row.names(to_plot), pattern = "^A"), ]  
+
+to_plot = gather(as.data.frame(to_plot), sample, lcpm, "Triploid_Ch_AAC R1":"Parental_mix R3",factor_key=TRUE)
+
+ggplot(to_plot, aes(x = to_plot$sample, y = to_plot$lcpm, color = to_plot$sample)) +
+  geom_boxplot(width = 0.60, alpha = 0.3)+
+  geom_violin( width = 0.95, fill = NA)+
+  scale_color_manual(values = col) +
+  theme_cowplot()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.position = "none")+
+  xlab("Samples") +
+  ylab("Log2 CPM") +
+  ggtitle("Expression on Darmor-bzh A subgenome w/ coverage")
+
+ggplot(to_plot, aes( x = to_plot$lcpm, color = to_plot$sample)) +
+  geom_density(alpha =0.2)+
+  scale_color_manual("Samples", values = col) +
+  scale_fill_manual("Samples", values = col) +
+  theme_cowplot()+
+  xlim(min(to_plot$lcpm)-1,max(to_plot$lcpm))+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  xlab("samples") +
+  ylab("Log2 CPM") +
+  ggtitle("Expression on Darmor-bzh A subgenome w/ coverage")
+```
+
+
+```{r, fig.height=4, fig.width=6}
+data = DEG_parental
+cols_1 = c("Triploid_Ch_AAC R1", "Triploid_Ch_AAC R2", "Triploid_Ch_AAC R3")
+cols_2 = c("Parental_mix R1","Parental_mix R2", "Parental_mix R3")
+name_1 = "Hybrid DCh AAC"
+name_2 = "Parental mix"
+genome = "A"
+comp_name = "Hybrid_vs_Parental_mix"
+p1 <- plotDEG(data= data, cols_1= cols_1 , cols_2= cols_2, name_1 = name_1, name_2 = name_2, genome = "A", comp_name = comp_name)
+p1
+```
+
+
+#### Parental dominance classes
+
+```{r}
+d = merge(DEG_parental$dtA, DEG_all_A$dtA[,c(1,2,3)], by = "row.names")
+colnames(d) = c("genes", "Hy/P", "Ch/Da", "Hy/Da", "Hy/Ch")
+d = getDEGClasses(d)
+
+cat("\n")
+summary(as.factor(d[,"Class"]))
+```
+
+522 genes (3.2%) fell into an expression level dominance category. Out of them, a majority of transgressive up-regulated genes (Classes V, VI and VIII) and transgressive-down regulated genes (Classes III, VII and X) are found. We didn't find any Additivity, or Parental expression level dominance. The most dominant categories correspond to genes upregulated in the Hybrid vs its parents, and that are either upregulated in Darmor-bzh compared to Chiifu or that are not significantly differentially expressed between the two parents. The other two dominant categories are the opposite.
+
+Genes that are upregulated in Darmor-bzh compared to Chiifu and the Hybrid but that are not different between the Hybrid and Chiifu are the most common (2137).
+
+### Homeoglobal level
+
+#### Gene counts sum between homeologs
+
+##### Prepare output directory
+```{bash, engine.opts='-l'}
+cmd='cd SnakePipes/All_samples_ete_1M/;
+mkdir featureCounts_homeoglobal;
+'
+
+if [ $SSH = T ];
+then
+  ssh -i $SSH_key_path  $cluster "cd "$wd_cluster"; "$cmd""
+else
+  cd $wd_cluster; $cmd
+fi
+
+```
+
+##### Homeoglobal featureCounts files computation
+```{r}
+if (params$SSH == "T"){
+  path_out =  paste0(params$wd_local, "SnakePipes/All_samples_ete_1M/featureCounts_homeoglobal/")
+  path_chiifu =  paste0(params$wd_local, "SnakePipes/All_samples_ete_1M/featureCounts_on_covered_regions/")
+  path_all =  paste0(params$wd_local, "SnakePipes/All_samples_ete_1M/featureCounts/")
+  homeo_path =  paste0(params$wd_local, "../genome/Homeologie_Bna_DarV10_Meth_noscaf.txt")
+}else{
+  path_out = paste0(params$wd_cluster, "SnakePipes/All_samples_ete_1M/featureCounts_homeoglobal/")
+  path_chiifu =  paste0(params$wd_cluster, "SnakePipes/All_samples_ete_1M/featureCounts_on_covered_regions/")
+  path_all =  paste0(params$wd_cluster, "SnakePipes/All_samples_ete_1M/featureCounts/")
+  homeo_path =  paste0(params$wd_cluster, "../genome/Homeologie_Bna_DarV10_Meth_noscaf.txt")
+}
+
+homeologs = suppressMessages( vroom(homeo_path,col_names = F) )
+homeologs_all = as.data.frame(unlist(c(homeologs[,1], homeologs[,2])))
+colnames(homeologs_all) = "X1"
+
+
+files = list.files(path = path_chiifu, pattern = "CS.*txt$|DhB.*txt$|DCh.*txt$|DCD.*txt$|CD4.*txt$")
+featureCounts_chiifu = list()
+for (f in 1:length(files)){
+  featureCounts_chiifu[[f]] = suppressMessages( vroom(paste0(path_chiifu,files[f]), col_names = T, delim = "\t", skip = 1) )
+}
+
+files = list.files(path = path_all, pattern = "CS.*txt$|DhB.*txt$|DCh.*txt$|DCD.*txt$|CD4.*txt$")
+featureCounts_all = list()
+for (f in 1:length(files)){
+  featureCounts_all[[f]] = suppressMessages( vroom(paste0(path_all,files[f]), col_names = T, delim = "\t", skip = 1) )
+}
+
+featureCounts_homeo = list()
+for (f in 1:length(files)){
+  homeo_A = merge(homeologs, featureCounts_chiifu[[f]], by.x="X1", by.y="Geneid")
+  homeo_AC = merge(homeo_A, featureCounts_all[[f]], by.x="X2", by.y="Geneid")
+  homeo_AC = data.frame(
+                  paste(homeo_AC[,2], homeo_AC[,1], sep = "|"),
+                  paste(homeo_AC[,5], homeo_AC[,11], sep = ";"),
+                  paste(homeo_AC[,6], homeo_AC[,12], sep = ";"),
+                  paste(homeo_AC[,7], homeo_AC[,13], sep = ";"),
+                  paste(homeo_AC[,8], homeo_AC[,14], sep = ";"),
+                  homeo_AC[,9] + homeo_AC[,15],
+                  homeo_AC[,10] + homeo_AC[,16]
+                  )
+  colnames(homeo_AC) = colnames(featureCounts_chiifu[[f]])
+  featureCounts_homeo[[f]] = homeo_AC
+  write.table(homeo_AC, file = paste0(path_out,files[[f]]), quote = F, col.names = T, row.names = F, sep = "\t")
+}
+
+```
+
+#### Genes filtration and normalization sample per sample
+
+```{r}
+if (params$SSH == "T"){
+  path =  paste0(params$wd_local, "SnakePipes/All_samples_ete_1M/featureCounts_homeoglobal/")
+  homeo_path =  paste0(params$wd_local, "../genome/Homeologie_Bna_DarV10_Meth_noscaf.txt")
+}else{
+  path =  paste0(params$wd_cluster, "SnakePipes/All_samples_ete_1M/featureCounts_homeoglobal/")
+  homeo_path =  paste0(params$wd_cluster, "../genome/Homeologie_Bna_DarV10_Meth_noscaf.txt")
+}
+
+col = c( brewer.pal(8, "Blues")[6:8], brewer.pal(8, "Greens")[6:8], brewer.pal(8, "Reds")[6:8], 
+         brewer.pal(8, "Oranges")[6:8], brewer.pal(8, "Greys")[6:8] )
+
+files = list.files(path = path, pattern = "CS.*txt$|DhB.*txt$|DCh.*txt$|DCD.*txt$|CD4.*txt$")
+
+group   = c(rep("Darmor_AA",3),rep("Chiifu_AA",3),rep("Triploid_D_AAC",3),rep("Triploid_Ch_AAC",3),rep("Darmor_AACC",3))
+
+columns = c("gene","chr","start","end","strand","length",
+            "Darmor_AA R1", "Darmor_AA R2", "Darmor_AA R3", 
+            "Chiifu_AA R1","Chiifu_AA R2","Chiifu_AA R3",
+            "Triploid_D_AAC R1", "Triploid_D_AAC R2", "Triploid_D_AAC R3", 
+            "Triploid_Ch_AAC R1", "Triploid_Ch_AAC R2", "Triploid_Ch_AAC R3", 
+            "Darmor_AACC R1","Darmor_AACC R2","Darmor_AACC R3")
+
+design <- model.matrix(~0+group)
+colnames(design) <- gsub("group", "", colnames(design))
+
+contr.matrix <- makeContrasts(
+  Chiifu_vs_Darmor = Chiifu_AA - Darmor_AACC,
+  TriploidCh_vs_Darmor = Triploid_Ch_AAC -  Darmor_AACC,
+  TriploidCh_vs_Chiifu = Triploid_Ch_AAC - Chiifu_AA,
+  TriploidD_vs_Darmor = Triploid_D_AAC - Darmor_AACC,
+  TriploidD_vs_Darmor_AA = Triploid_D_AAC - Darmor_AA,
+  Darmor_vs_Darmor_AA = Darmor_AACC - Darmor_AA,
+  TriploidCh_vs_TriploidD = Triploid_Ch_AAC - Triploid_D_AAC,
+  Chiifu_vs_Darmor_AA = Chiifu_AA - Darmor_AA,
+  levels = colnames(design)
+)
+
+lfc=0.584962501
+
+DEG_all_homeo <- getDEG(path, skip = 0, files, group, columns, contr.matrix, lfc, genome = ".*", normalisation = "RLE", keep_homeo = F, homeo_path = homeo_path, col = col)
+```
+
+
+```{r,  fig.height= 4, fig.width= 6}
+to_plot <- as.data.frame(DEG_all_homeo$lcpm)
+to_plot = to_plot[grep(row.names(to_plot), pattern = "^A"), ]  
+
+to_plot = gather(as.data.frame(to_plot), sample, lcpm,  "Darmor_AA R1":"Darmor_AACC R3",factor_key=TRUE)
+
+ggplot(to_plot, aes(x = to_plot$sample, y = to_plot$lcpm, color = to_plot$sample)) +
+  geom_boxplot(width = 0.60, alpha = 0.3)+
+  geom_violin( width = 0.95, fill = NA)+
+  scale_color_manual(values = col) +
+  theme_cowplot()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.position = "none")+
+  xlab("Samples") +
+  ylab("Log2 CPM") +
+  ggtitle("Homeoglobal Expression - A subgenome")
+
+ggplot(to_plot, aes( x = to_plot$lcpm, color = to_plot$sample)) +
+  geom_density(alpha =0.2)+
+  scale_color_manual("Samples", values = col) +
+  scale_fill_manual("Samples", values = col) +
+  theme_cowplot()+
+  xlim(min(to_plot$lcpm)-1,max(to_plot$lcpm))+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  xlab("samples") +
+  ylab("Log2 CPM") +
+  ggtitle("Homeoglobal Expression - A subgenome")
+```
+
+
+```{r}
+kable_minimal(kable(t(summary(DEG_all_homeo$dtA)),caption = "A subgenome"))
+```
+
+```{r,  fig.height= 4, fig.width= 6}
+data = DEG_all_homeo
+cols_1 = c("Triploid_Ch_AAC R1", "Triploid_Ch_AAC R2", "Triploid_Ch_AAC R3")
+cols_2 = c("Darmor_AACC R1","Darmor_AACC R2", "Darmor_AACC R3")
+name_1 = "Hybrid DCh AAC"
+name_2 = "Darmor AACC"
+genome = "A"
+comp_name = "TriploidCh_vs_Darmor"
+p1 <- plotDEG(data= data, cols_1= cols_1 , cols_2= cols_2, name_1 = name_1, name_2 = name_2, genome = "A", comp_name = comp_name)
+p1
+cols_1 = c("Chiifu_AA R1", "Chiifu_AA R2", "Chiifu_AA R3")
+cols_2 = c("Darmor_AACC R1","Darmor_AACC R2", "Darmor_AACC R3")
+name_1 = "Chiifu AA"
+name_2 = "Darmor AACC"
+genome = "A"
+comp_name = "Chiifu_vs_Darmor"
+p2 <- plotDEG(data= data, cols_1= cols_1 , cols_2= cols_2, name_1 = name_1, name_2 = name_2, genome = "A", comp_name = comp_name)
+p2
+cols_2 = c("Chiifu_AA R1", "Chiifu_AA R2", "Chiifu_AA R3")
+cols_1 = c("Triploid_Ch_AAC R1","Triploid_Ch_AAC R2", "Triploid_Ch_AAC R3")
+name_2 = "Chiifu AA"
+name_1 = "Hybrid DCh AAC"
+genome = "A"
+comp_name = "TriploidCh_vs_Chiifu"
+p3 <- plotDEG(data= data, cols_1= cols_1 , cols_2= cols_2, name_1 = name_1, name_2 = name_2, genome = "A", comp_name = comp_name)
+p3
+```
+
+#### Genes filtration and normalization for parental mix
+
+To compare Triploid vs Tetra and diploid genomes, it is necessary to compute the parental mix genes expression. Replicates number (1, 2, 3) correspond to different batches of plants that were raised in the same conditions among the three genotypes. For each gene, we thus calculate the parental mix expression by computing the average of the Counts Per Million (CPM), per replicate, between the tetraploid and the diploid genotypes.
+
+The genes expression were obtained using the SnakePipes mRNA-seq pipeline on the Darmor-bzh v10 genome assembly, using STAR with the following parameters for the mapping: `--alignEndsType EndToEnd --outFilterMismatchNmax 1`.
+
+```{r}
+if (params$SSH == "T"){
+  path =  paste0(params$wd_local, "SnakePipes/All_samples_ete_1M/featureCounts_homeoglobal/")
+  homeo_path =  paste0(params$wd_local, "../genome/Homeologie_Bna_DarV10_Meth_noscaf.txt")
+}else{
+  path =  paste0(params$wd_cluster, "SnakePipes/All_samples_ete_1M/featureCounts_homeoglobal/")
+  homeo_path =  paste0(params$wd_cluster, "../genome/Homeologie_Bna_DarV10_Meth_noscaf.txt")
+}
+
+files = list.files(path = path, pattern = "CS.*txt$|DhB.*txt$|DCh.*txt$")
+
+col <- c( brewer.pal(8, "Greens")[6:8], brewer.pal(8, "Reds")[6:8], brewer.pal(8, "Greys")[6:8] )
+
+group   = c(rep("Chiifu_AA",3),rep("Triploid_Ch_AAC",3),rep("Darmor_AACC",3))
+
+columns = c("gene","chr","start","end","strand","length",
+            "Chiifu_AA R1","Chiifu_AA R2","Chiifu_AA R3",
+            "Triploid_Ch_AAC R1", "Triploid_Ch_AAC R2", "Triploid_Ch_AAC R3", 
+            "Darmor_AACC R1","Darmor_AACC R2","Darmor_AACC R3")
+
+design <- model.matrix(~0+group)
+colnames(design) <- gsub("group", "", colnames(design))
+
+lfc=0.584962501
+
+DEG_parental_homeo <- getDEG_pmix(path = path, files = files, group = group, columns = columns, contr.matrix = contr.matrix, lfc = lfc, genome = ".*", normalisation = "RLE", col, keep_homeo = F, homeo_path = homeo_path)
+```
+
+```{r}
 kable_minimal(kable(summary(DEG_parental_homeo$dtA),caption = "A subgenome"))
+```
 
-
+```{r,  fig.height= 4, fig.width= 6}
 to_plot <- as.data.frame(DEG_parental_homeo$lcpm)
 to_plot = to_plot[grep(row.names(to_plot), pattern = "^A"), ]  
 
@@ -533,9 +730,7 @@ ggplot(to_plot, aes( x = to_plot$lcpm, color = to_plot$sample)) +
   xlab("samples") +
   ylab("Log2 CPM") +
   ggtitle("Expression on Darmor-bzh A subgenome w/ coverage")
-
 ```
-
 
 ```{r, fig.height=4, fig.width=6}
 data = DEG_parental_homeo
@@ -547,149 +742,15 @@ genome = "A"
 comp_name = "Hybrid_vs_Parental_mix"
 p1 <- plotDEG(data= data, cols_1= cols_1 , cols_2= cols_2, name_1 = name_1, name_2 = name_2, genome = "A", comp_name = comp_name)
 p1
-
 ```
 
-
-## Parental dominance classes
-
-
-Additivité :
-
-a) Catégorie no change : si pas de différence signif entre Darmor et Chiifu + pas de différence signif entre (Ch + Darmor)/2 et Dch
-b) Catégorie I: Darmor est uprégulé par rapport à chiifu + pas de différence signif entre (Ch + Darmor)/2 et Dch
-c) Catégorie XII : Darmor est downrégulé par rapport à chiifu + pas de différence signif entre Darmor et Dch​
-
-Dominance maternelle (cf Darmor) :
-
-a) Catégorie II: Darmor est uprégulé par rapport à chiifu + différence signif entre (Ch + Darmor)/2 et Dch + pas de différence signif entre Darmor et Dch
-b) Catégorie XI: Darmor est down-régulé par rapport à chiifu + différence signif entre (Ch + Darmor)/2 et Dch​ + pas de différence signif entre Darmor et Dch
-
-Dominance paternelle (cf Chiifu) :
-
-a) Catégorie IV: Darmor est down-régulé par rapport à chiifu + différence signif entre (Ch + Darmor)/2 et Dch + pas de différence signif entre Chiifu et Dch
-b) Catégorie IX: Darmor est up-régulé par rapport à chiifu + différence signif entre (Ch + Darmor)/2 et Dch​ + pas de différence signif entre Chiifu et Dch
-
-Transgressivité down : 
-
-a) Catégorie III: Darmor est uprégulé par rapport à chiifu + différence signif entre (Ch + Darmor)/2 et Dch + Dch est downrégulé par rapport à Darmor + Dch est downrégulé par rapport à Chiifu
-b) Catégorie VII: pas de diff signif entre Darmor et Chiifu + différence signif entre (Ch + Darmor)/2 et Dch + Dch est downrégulé par rapport à Darmor + Dch est downrégulé par rapport à Chiifu
-c) Catégorie X: Darmor est downrégulé par rapport à chiifu + différence signif entre (Ch + Darmor)/2 et Dch + Dch est downrégulé par rapport à Darmor + Dch est downrégulé par rapport à Chiifu
-
-Transgressivité up : 
-
-a) Catégorie V: Darmor est uprégulé par rapport à chiifu + différence signif entre (Ch + Darmor)/2 et Dch + Dch est uprégulé par rapport à Darmor + Dch est uprégulé par rapport à Chiifu
-b) Catégorie VI: Darmor est downrégulé par rapport à chiifu + différence signif entre (Ch + Darmor)/2 et Dch + Dch est uprégulé par rapport à Darmor + Dch est uprégulé par rapport à Chiifu
-c) Catégorie VIII: pas de diff signif entre Darmor et Chiifu + différence signif entre (Ch + Darmor)/2 et Dch + Dch est uprégulé par rapport à Darmor + Dch est uprégulé par rapport à Chiifu
-
-
+#### Parental dominance classes
 
 ```{r}
-
-getDEGClasses <- function(d){
-
-d = as.data.frame(d)
-
-d["Class"] = NA
-
-d[which(
-  d[,"Hy/P"] == 0 &
-  d[,"Ch/Da"] == 0 &
-  d[,"Hy/Da"] == 0 &
-  d[,"Hy/Ch"] == 0  
-),"Class"] = "No Change"
-
-d[which(
-  d[,"Hy/P"] == 0 &
-  d[,"Ch/Da"] == -1
-),"Class"] = "I"
-
-d[which(
-  d[,"Hy/P"] == 0 &
-  d[,"Ch/Da"] == 1
-),"Class"] = "XII"
-
-d[which(
-  d[,"Hy/Da"] == 0 &
-  d[,"Ch/Da"] == -1
-),"Class"] = "II"
-
-d[which(
-  d[,"Hy/Da"] == 0 &
-  d[,"Ch/Da"] == 1
-),"Class"] = "XI"
-
-d[which(
-  d[,"Hy/Ch"] == 0 &
-  d[,"Ch/Da"] == 1
-),"Class"] = "IV"
-
-d[which(
-  d[,"Hy/Ch"] == 0 &
-  d[,"Ch/Da"] == -1
-),"Class"] = "IX"
-
-d[which(
-  d[,"Hy/P"] == -1 & 
-  d[,"Hy/Ch"] == -1 &  
-  d[,"Hy/Da"] == -1 &
-  d[,"Ch/Da"] == -1
-),"Class"] = "III"
-
-d[which(
-  d[,"Hy/P"] == -1 & 
-  d[,"Hy/Ch"] == -1 &  
-  d[,"Hy/Da"] == -1 &
-  d[,"Ch/Da"] == 0
-),"Class"] = "VII"
-
-d[which(
-  d[,"Hy/P"] == -1 & 
-  d[,"Hy/Ch"] == -1 &  
-  d[,"Hy/Da"] == -1 &
-  d[,"Ch/Da"] == 1
-),"Class"] = "X"
-
-d[which(
-  d[,"Hy/P"] == 1 &
-  d[,"Hy/Ch"] == 1 &  
-  d[,"Hy/Da"] == 1 &
-  d[,"Ch/Da"] == -1
-),"Class"] = "V"
-
-d[which(
-  d[,"Hy/P"] == 1 & 
-  d[,"Hy/Ch"] == 1 &  
-  d[,"Hy/Da"] == 1 &
-  d[,"Ch/Da"] == 1
-),"Class"] = "VI"
-
-d[which(
-  d[,"Hy/P"] == 1 &
-  d[,"Hy/Ch"] == 1 &  
-  d[,"Hy/Da"] == 1 &
-  d[,"Ch/Da"] == 0
-),"Class"] = "VIII"
-
-d[which(is.na(d[,"Class"])),"Class"] = "No expression level dominance"
-
-d[,"combination"] = paste(d[,1],d[,2],d[,3],d[,4],d[,5], sep = "_")
-
-return(d)
-}
-
-d = merge(DEG_parental_homeo$dtA, DEG_all_A_on_chiifu_homeo$dtA[,c(1,2,3)], by = "row.names")
+d = merge(DEG_parental_homeo$dtA, DEG_all_homeo$dtA[,c(1,2,3)], by = "row.names")
 colnames(d) = c("genes", "Hy/P", "Ch/Da", "Hy/Da", "Hy/Ch")
 d = getDEGClasses(d)
 
-
 cat("\n")
 summary(as.factor(d[,"Class"]))
-
-summary(d[,])
-
 ```
-
-522 genes (3.2%) fell into an expression level dominance category. Out of them, a majority of transgressive up-regulated genes (Classes V, VI and VIII) and transgressive-down regulated genes (Classes III, VII and X) are found. We didn't find any Additivity, or Parental expression level dominance. The most dominant categories correspond to genes upregulated in the Hybrid vs its parents, and that are either upregulated in Darmor-bzh compared to Chiifu or that are not significantly differentially expressed between the two parents. The other two dominant categories are the opposite.
-
-Genes that are upregulated in Darmor-bzh compared to Chiifu and the Hybrid but that are not different between the Hybrid and Chiifu are the most common (2137).

@@ -12,6 +12,8 @@ library(RColorBrewer)
 library(kableExtra)
 library(tidyr)
 library(cowplot)
+library(knitr)
+library(rtracklayer)
 source_gist("524eade46135f6348140")
 
 #### Compute Parental Mean ####
@@ -121,7 +123,7 @@ voom_lcpm = function (counts, design = NULL, lib.size = NULL, normalize.method =
 
 #### Compute DEGs ####
 
-getDEG <- function(path, files, group, columns, contr.matrix, lfc = 0.584962501, genome = ".*", normalisation = "RLE", col = 
+getDEG <- function(path, files, skip = 1, group, columns, contr.matrix, lfc = 0.584962501, genome = ".*", normalisation = "RLE", col = 
                      c( brewer.pal(8, "Blues")[6:8], brewer.pal(8, "Greens")[6:8], brewer.pal(8, "Reds")[6:8], 
                         brewer.pal(8, "Oranges")[6:8], brewer.pal(8, "Greys")[6:8] ), keep_homeo = F, homeo_path = NULL)
   {
@@ -139,7 +141,6 @@ getDEG <- function(path, files, group, columns, contr.matrix, lfc = 0.584962501,
   genes_expression =  do.call(cbind,data_list)
   to_keep = seq(from = 7, to = ncol(genes_expression), by = 7)
   genes_expression = genes_expression[,c(1:6,to_keep)]
-  
   colnames(genes_expression) = columns
   genes_expression_basic = genes_expression
   rownames(genes_expression_basic) = genes_expression_basic$gene
@@ -181,11 +182,11 @@ getDEG <- function(path, files, group, columns, contr.matrix, lfc = 0.584962501,
   # CREATE DGE OBJECT
   
   counts            = genes_expression_basic[,c(7:ncol(genes_expression_basic))]
-  row.names(counts) <- genes_expression_basic[,1]
+  row.names(counts) = genes_expression_basic[,1]
   lib.size          = apply( genes_expression_basic[,7:ncol(genes_expression_basic)], 2, sum )
   norm.factors      = rep(1, length(lib.size))
-  samplenames      = colnames(counts)
-  samples           = as.data.frame( cbind(files, group) )
+  samplenames       = colnames(counts)
+  samples           = as.data.frame( cbind( files, group ) )
   rownames(samples) = samplenames
   
   x = DGEList(counts = counts,
@@ -309,7 +310,7 @@ getDEG <- function(path, files, group, columns, contr.matrix, lfc = 0.584962501,
 
 #### Compute DEGs for parental mean ####
 
-getDEG_pmix <- function(path, files, group, columns, contr.matrix, lfc, genome, normalisation, col, keep_homeo)
+getDEG_pmix <- function(path, files, group, columns, contr.matrix, lfc, genome, normalisation, col, keep_homeo, homeo_path)
   {
   # LOAD DATA
 
@@ -320,7 +321,7 @@ getDEG_pmix <- function(path, files, group, columns, contr.matrix, lfc, genome, 
     file_full =  paste0(path, files[[count]])
     data_list[[f]] = suppressMessages( vroom(file_full, skip = 1, col_names = T) )
   }
-  
+
   genes_expression =  do.call(cbind,data_list)
   to_keep = seq(from = 7, to = ncol(genes_expression), by = 7)
   genes_expression = genes_expression[,c(1:6,to_keep)]
@@ -544,7 +545,6 @@ plotDEG <- function(data, cols_1, cols_2, name_1, name_2, comp_name, genome)
     comparison = comparison[grep( x = row.names(comparison), pattern = "^A"),]
   }
   
-  0.
   if(genome == "C"){
     sum = summary(data$dtC) 
     data$lcpm = data$lcpm[grep( x = row.names(data$lcpm), pattern = "^C"),]
@@ -587,4 +587,99 @@ plotDEG <- function(data, cols_1, cols_2, name_1, name_2, comp_name, genome)
     stat_smooth_func(geom="text",method="lm",hjust=0,parse=TRUE,ypos = max(comparison[,1:2])+0.5, xpos = min(comparison[,1:2])) +
     geom_smooth(method="lm",se=FALSE, color = "grey") +
     theme(plot.title = element_text(size = 12))
+}
+
+#### Get Parental Dominance Classes ####
+
+
+getDEGClasses <- function(d){
+  
+  d = as.data.frame(d)
+  
+  d["Class"] = NA
+  
+  d[which(
+    d[,"Hy/P"] == 0 &
+      d[,"Ch/Da"] == 0 &
+      d[,"Hy/Da"] == 0 &
+      d[,"Hy/Ch"] == 0  
+  ),"Class"] = "No Change"
+  
+  d[which(
+    d[,"Hy/P"] == 0 &
+      d[,"Ch/Da"] == -1
+  ),"Class"] = "I"
+  
+  d[which(
+    d[,"Hy/P"] == 0 &
+      d[,"Ch/Da"] == 1
+  ),"Class"] = "XII"
+  
+  d[which(
+    d[,"Hy/Da"] == 0 &
+      d[,"Ch/Da"] == -1
+  ),"Class"] = "II"
+  
+  d[which(
+    d[,"Hy/Da"] == 0 &
+      d[,"Ch/Da"] == 1
+  ),"Class"] = "XI"
+  
+  d[which(
+    d[,"Hy/Ch"] == 0 &
+      d[,"Ch/Da"] == 1
+  ),"Class"] = "IV"
+  
+  d[which(
+    d[,"Hy/Ch"] == 0 &
+      d[,"Ch/Da"] == -1
+  ),"Class"] = "IX"
+  
+  d[which(
+    d[,"Hy/P"] == -1 & 
+      d[,"Hy/Ch"] == -1 &  
+      d[,"Hy/Da"] == -1 &
+      d[,"Ch/Da"] == -1
+  ),"Class"] = "III"
+  
+  d[which(
+    d[,"Hy/P"] == -1 & 
+      d[,"Hy/Ch"] == -1 &  
+      d[,"Hy/Da"] == -1 &
+      d[,"Ch/Da"] == 0
+  ),"Class"] = "VII"
+  
+  d[which(
+    d[,"Hy/P"] == -1 & 
+      d[,"Hy/Ch"] == -1 &  
+      d[,"Hy/Da"] == -1 &
+      d[,"Ch/Da"] == 1
+  ),"Class"] = "X"
+  
+  d[which(
+    d[,"Hy/P"] == 1 &
+      d[,"Hy/Ch"] == 1 &  
+      d[,"Hy/Da"] == 1 &
+      d[,"Ch/Da"] == -1
+  ),"Class"] = "V"
+  
+  d[which(
+    d[,"Hy/P"] == 1 & 
+      d[,"Hy/Ch"] == 1 &  
+      d[,"Hy/Da"] == 1 &
+      d[,"Ch/Da"] == 1
+  ),"Class"] = "VI"
+  
+  d[which(
+    d[,"Hy/P"] == 1 &
+      d[,"Hy/Ch"] == 1 &  
+      d[,"Hy/Da"] == 1 &
+      d[,"Ch/Da"] == 0
+  ),"Class"] = "VIII"
+  
+  d[which(is.na(d[,"Class"])),"Class"] = "No expression level dominance"
+  
+  d[,"combination"] = paste(d[,1],d[,2],d[,3],d[,4],d[,5], sep = "_")
+  
+  return(d)
 }
